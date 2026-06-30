@@ -88,7 +88,7 @@ These apply to **every** task. Values are copied verbatim from the spec and the 
   "scripts": {
     "build": "tsc && node -e \"const fs=require('fs'); const f='dist/index.js'; let c=fs.readFileSync(f,'utf8'); if(c.startsWith('#!')) c=c.slice(c.indexOf('\\n')+1); fs.writeFileSync(f, '#!/usr/bin/env node\\n'+c); fs.chmodSync(f, '755')\"",
     "prepublishOnly": "npm run build",
-    "test": "tsc -p tsconfig.test.json && node --test \"build-test/tests/\"",
+    "test": "tsc -p tsconfig.test.json && node --test \"build-test/tests/**/*.test.js\"",
     "start": "node dist/index.js"
   },
   "dependencies": {
