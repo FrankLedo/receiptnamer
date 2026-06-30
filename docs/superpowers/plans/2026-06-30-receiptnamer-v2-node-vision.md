@@ -13,7 +13,7 @@
 These apply to **every** task. Values are copied verbatim from the spec and the verified pdfnamer conventions.
 
 - **Language/module:** TypeScript, ESM (`"type": "module"`). Relative imports in source MUST use explicit `.js` extensions (e.g. `import { renderFirstPage } from "./render.js"`) so compiled output resolves at runtime under Node ESM.
-- **Node floor:** `"engines": { "node": ">=18.3.0" }` (>=18.3 for `node:util` `parseArgs`).
+- **Node floor:** `"engines": { "node": ">=22.13.0" }` — **required by `pdfjs-dist@6.1.200`** (its own engines: `>=22.13.0 || >=24`). Also comfortably satisfies `node:util` `parseArgs` (≥18.3). Node 18/20 are NOT supported.
 - **Bin:** `"bin": { "receiptnamer": "dist/index.js" }`. Build = `tsc` then an inline `node -e` step that prepends `#!/usr/bin/env node` and `chmod 755`s `dist/index.js` (verbatim pattern below).
 - **Dependencies (runtime):** `pdfjs-dist@^6.1.200`, `@napi-rs/canvas@^1.0.2`, `chokidar@^4.0.0`. **Dev:** `@types/node@^22.0.0`, `typescript@^5.0.0`. No other runtime deps. **No Anthropic SDK** — HTTP via the Node built-in `fetch`.
 - **Anthropic key:** read ONLY from `process.env.ANTHROPIC_API_KEY`. NEVER read from or write to the config file.
@@ -84,7 +84,7 @@ These apply to **every** task. Values are copied verbatim from the spec and the 
   "bin": { "receiptnamer": "dist/index.js" },
   "keywords": ["receipt","rename","scan","vision","ollama","anthropic","cli","automation","pdf"],
   "repository": { "type": "git", "url": "git+https://github.com/frankledo/receiptnamer.git" },
-  "engines": { "node": ">=18.3.0" },
+  "engines": { "node": ">=22.13.0" },
   "scripts": {
     "build": "tsc && node -e \"const fs=require('fs'); const f='dist/index.js'; let c=fs.readFileSync(f,'utf8'); if(c.startsWith('#!')) c=c.slice(c.indexOf('\\n')+1); fs.writeFileSync(f, '#!/usr/bin/env node\\n'+c); fs.chmodSync(f, '755')\"",
     "prepublishOnly": "npm run build",
@@ -1773,7 +1773,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [18, 20, 22]
+        node-version: [22, 24]   # pdfjs-dist@6 requires Node >=22.13.0 || >=24
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -1816,7 +1816,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'   # pdfjs-dist@6 requires Node >=22.13.0
           registry-url: 'https://registry.npmjs.org'
       - run: npm ci
       - run: npm publish --access public --provenance
