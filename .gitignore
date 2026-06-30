@@ -3,3 +3,6 @@ dist/
 build-test/
 .DS_Store
 ~/testoutput.txt
+
+# Local design docs (specs/plans) — keep on disk, do not track
+docs/superpowers/
