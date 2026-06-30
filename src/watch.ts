@@ -1,5 +1,5 @@
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import chokidar from "chokidar";
 import { expandHome, type Config } from "./config.js";
 import { createNamer } from "./backends/factory.js";
@@ -37,7 +37,7 @@ export async function watch(config: Config, opts: { dryRun: boolean }): Promise<
   const dirs = config.watch_dirs.map(expandHome);
   const watcher = chokidar.watch(dirs, { ignoreInitial: false, depth: 0, awaitWriteFinish: true });
   watcher.on("add", async (path: string) => {
-    const name = path.split("/").pop() ?? "";
+    const name = basename(path);
     if (!isScannedReceipt(name)) return;
     const r = await processFile(path, { namer, dryRun: opts.dryRun });
     console.log(`${r.outcome.toUpperCase()} ${r.file}${r.to ? ` -> ${r.to}` : ""}`);
