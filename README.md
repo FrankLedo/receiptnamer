@@ -1,78 +1,74 @@
 # receiptnamer
 
-Automatically OCR and rename scanned receipts using Claude. Scan a receipt with your iPhone, and it lands in your folder with a clean, searchable name like `2026-06-15 - Nobu - Birthday Dinner.pdf`.
+Automatically rename scanned receipt PDFs using a vision-language model. Scan a
+receipt with your iPhone, and it lands in your folder with a clean, searchable
+name like `2026-06-15 - Nobu.pdf`.
 
 ## How it works
 
-1. You scan a receipt with the iPhone Files app — it saves as `Scanned Document.pdf`
-2. receiptnamer runs OCR on it (making it text-searchable) then sends the extracted text to Claude
-3. Claude returns a descriptive filename: `YYYY-MM-DD - Vendor[ - context].pdf`
-4. The file is renamed in place
+receiptnamer renders the **first page of the PDF to an image** and shows that
+image to a vision model, which reads it the way a person would and returns a
+filename: `YYYY-MM-DD - Vendor.pdf`. It does not run OCR or extract text first.
 
-A background watcher fires automatically whenever a new scanned file appears, so the rename typically happens within seconds of the file syncing to your Mac.
+Reading the rendered page directly (rather than OCR'd text) keeps the model
+layout-aware — it can tell the printed date at the top of a receipt from a
+card-network timestamp buried in the footer, even on noisy thermal-printer
+scans where OCR text alone loses that structure. If the receipt has no
+legible date, the file's scan date (its creation date) is used as a fallback.
 
-## Prerequisites
+The file is renamed in place. A background watcher can fire automatically
+whenever a new scanned file appears, so the rename typically happens within
+seconds of the file syncing to your Mac.
 
-- **macOS** with iCloud Drive (or any local folder)
-- **[Claude Code](https://claude.ai/code)** — the default backend; uses `claude --print`, which bills against your Claude subscription, not a separate API account
-- **ocrmypdf** — adds a text layer to scanned PDFs
-- **poppler** — provides `pdftotext` for text extraction
-- **[Ollama](https://ollama.com)** *(optional)* — run a local model instead of Claude, so receipts never leave your Mac. See [Model backend](#model-backend).
-
-Install dependencies with Homebrew:
-
-```
-brew install ocrmypdf poppler
-```
-
-## Installation
-
-**1. Copy the script to your PATH**
+## Install
 
 ```
-cp receiptnamer ~/.local/bin/receiptnamer
-chmod +x ~/.local/bin/receiptnamer
+npm install -g @frankledo/receiptnamer
 ```
 
-**2. Create a config file**
+Requires Node.js >=22.13.0.
+
+## Backends
+
+receiptnamer can read receipts with a local model via **Ollama** (default,
+private, free) or with the **Anthropic API** (cloud, no local setup).
+
+### Ollama (default)
+
+1. [Install Ollama](https://ollama.com)
+2. Pull the vision model:
+   ```
+   ollama pull qwen2.5vl:7b
+   ```
+3. That's it — receiptnamer talks to Ollama at `http://localhost:11434` by
+   default. Receipts never leave your machine.
+
+If the Ollama server is unreachable, receiptnamer leaves the file unrenamed
+and reports a skip — it never silently falls back to the cloud.
+
+### Anthropic API
+
+Set `"backend": "anthropic"` in your config (see [Configuration](#configuration))
+and export an API key in your shell environment:
+
+```
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+The default model is `claude-haiku-4-5`. The API key is **never read from the
+config file** — it must be set in the environment.
+
+## Getting started
+
+Create a starter config:
 
 ```
 receiptnamer --init
 ```
 
-This creates `~/.config/receiptnamer/config.json` pre-filled with your iCloud receipts path (if detected) or `~/Documents/Receipts` otherwise. Edit it to point to your actual receipts folder.
-
-**3. Install the background watcher** *(optional but recommended)*
-
-```
-receiptnamer --install-watcher
-```
-
-This installs a launchd agent that watches your receipts folder and renames new scanned files automatically. It fires on filesystem events (near-instant) with a 5-minute polling fallback.
-
-**4. Install the Finder Quick Action** *(optional)*
-
-```
-receiptnamer --install-quickaction
-```
-
-Then go to **System Settings → Privacy & Security → Extensions → Finder** and enable "Rename with receiptnamer". You can then right-click any PDF or folder in Finder to rename it.
-
-## Scanning receipts with your iPhone
-
-The fastest workflow uses the built-in document scanner in the **Files** app:
-
-1. Open the **Files** app on your iPhone
-2. Navigate to your receipts folder (e.g. iCloud Drive → Files → 2026 → Receipts and Manuals)
-3. Tap the **…** button in the top-right corner
-4. Tap **Scan Documents**
-5. Point the camera at the receipt — the scanner auto-detects the edges and captures it
-6. Tap **Save** (top-right) when done — you can scan multiple pages before saving
-7. The PDF saves as `Scanned Document.pdf` directly in that folder
-
-If you have the watcher running, the file will be renamed within seconds of syncing to your Mac. No further action needed.
-
-> **Tip:** The Files scanner works better than the Notes or Camera app for receipts — it crops to the document edges and produces a cleaner PDF.
+This writes `~/.config/receiptnamer/config.json` with sensible defaults
+(`backend: "ollama"`, model `qwen2.5vl:7b`). Edit `watch_dirs` to point at
+your receipts folder(s).
 
 ## Usage
 
@@ -93,87 +89,101 @@ receiptnamer --dry-run ~/Documents/Receipts/
 
 **Output format:**
 ```
-RENAME    Scanned Document.pdf
-          → 2026-06-15 - Nobu - Birthday Dinner.pdf
-
+RENAMED Scanned Document.pdf -> 2026-06-15 - Nobu.pdf
 UNCHANGED 2026-01-03 - Whole Foods.pdf
-NO TEXT   Scanned Document 3.pdf   ← OCR failed, try --force-ocr
+SKIP Scanned Document 3.pdf (ollama unreachable)
 
-3 renamed, 1 unchanged, 1 skipped
+1 renamed, 1 unchanged, 1 skipped
 ```
+
+**Other commands:**
+```
+receiptnamer --init                  Create a starter config
+receiptnamer --watch-run             One watcher pass over configured watch_dirs
+receiptnamer --watch                 Run a continuous watcher
+receiptnamer --install-watcher       Install the macOS launchd watcher
+receiptnamer --install-quickaction   Install the macOS Finder Quick Action
+receiptnamer --help                  Show usage
+```
+
+**Options:**
+- `-n, --dry-run` — show what would be renamed without touching files
+- `-c, --config <path>` — use a specific config file instead of the default location
 
 ## Configuration
 
 Config file: `~/.config/receiptnamer/config.json`
 
-Override the path with the `RECEIPTNAMER_CONFIG` environment variable.
+Override the path with `-c/--config` or the `RECEIPTNAMER_CONFIG` environment
+variable.
 
 ```json
 {
   "watch_dirs": [
-    "~/Library/Mobile Documents/com~apple~CloudDocs/Files/*/Receipts and Manuals"
-  ]
+    "~/Library/Mobile Documents/com~apple~CloudDocs/Files/Receipts"
+  ],
+  "backend": "ollama",
+  "model": "qwen2.5vl:7b",
+  "ollama_host": "http://localhost:11434"
 }
 ```
 
-`watch_dirs` is a list of directories to watch and scan. Shell globs are supported — the `*` in the default path matches any year folder, so new year folders are picked up automatically without editing the config.
+| Key | Description |
+| --- | --- |
+| `watch_dirs` | List of directories to watch and scan for new receipt PDFs. |
+| `backend` | `"ollama"` (default) or `"anthropic"`. |
+| `model` | Model name for the chosen backend (e.g. `qwen2.5vl:7b`, `claude-haiku-4-5`). |
+| `ollama_host` | Base URL for the Ollama server. Defaults to `http://localhost:11434`. |
 
-**Multiple folders:**
-```json
-{
-  "watch_dirs": [
-    "~/Library/Mobile Documents/com~apple~CloudDocs/Files/*/Receipts and Manuals",
-    "~/Documents/Receipts"
-  ]
-}
-```
+There is no API key field in the config — the Anthropic API key is read only
+from the `ANTHROPIC_API_KEY` environment variable, never stored on disk.
 
-After changing `watch_dirs`, re-run `receiptnamer --install-watcher` to update the watcher.
+After changing `watch_dirs`, re-run `receiptnamer --install-watcher` to
+update the installed watcher.
 
-### Model backend
+## macOS watcher and Quick Action
 
-receiptnamer can name receipts with either cloud Claude (default) or a local
-[Ollama](https://ollama.com) model. Control this with two config keys:
-
-```json
-{
-  "watch_dirs": ["..."],
-  "backend": "claude",
-  "model": "qwen2.5:7b"
-}
-```
-
-- `backend`: `"claude"` (default) or `"ollama"`. If the key is absent, Claude is used.
-- `model`: the Ollama model name, used only when `backend` is `"ollama"` (e.g. `"qwen2.5:7b"`, `"llama3.3:70b"`).
-- `ollama_host` *(optional)*: defaults to `http://localhost:11434`.
-
-**Why local?** Receipts are financial documents — the `ollama` backend keeps them
-entirely on-device and works offline, with no API/subscription cost.
-
-**Tradeoff:** local models are less accurate at pulling the right date off a noisy
-OCR scan. In testing, `llama3.3:70b` came close to Claude while `qwen2.5:7b` was
-fast but often picked the wrong date. Claude remains the default for accuracy;
-switch to `ollama` when privacy or offline operation matters more.
-
-If `backend` is `ollama` but the Ollama server is unreachable, receiptnamer leaves
-the file unrenamed, shows a macOS notification, and the watcher retries on its next
-pass — it never silently falls back to the cloud.
-
-## Date handling
-
-receiptnamer tries to extract the date from the receipt text. If no date is found (common with credit card terminal printouts), it falls back to the **file creation date**, which is the date you scanned it — almost always the right date for receipts.
-
-## Limitations
-
-- **Credit card terminal receipts** (the small printed slip you sign) often don't have the merchant name in machine-readable text — it's part of a printed graphic. These will get a generic name like `2026-06-15 - Visa Credit.pdf` and may need manual correction.
-- **Image-only PDFs** that fail OCR are reported as `NO TEXT` and skipped. Try opening and re-saving the PDF from Preview, or use `ocrmypdf --force-ocr` directly.
-- Requires macOS (the watcher and Quick Action use macOS-specific tools). The CLI works on Linux with minor path adjustments.
-
-## Watcher log
+**Background watcher** — runs automatically and renames new scanned files as
+they appear:
 
 ```
-tail -f ~/Library/Logs/receiptnamer-watcher.log
+receiptnamer --install-watcher
 ```
+
+This installs a `launchd` agent (`~/Library/LaunchAgents/com.frankledo.receiptnamer.plist`)
+that runs a watch pass every 30 seconds over your configured `watch_dirs`.
+
+**Finder Quick Action** — right-click any PDF in Finder to rename it on demand:
+
+```
+receiptnamer --install-quickaction
+```
+
+Then go to **System Settings → Privacy & Security → Extensions → Finder** and
+enable "Rename Receipt". You can then right-click a PDF (or selection of
+PDFs) and choose **Quick Actions → Rename Receipt**.
+
+Both installers are macOS-only; the core CLI itself runs on any platform Node
+supports.
+
+## Scanning receipts with your iPhone
+
+The fastest workflow uses the built-in document scanner in the **Files** app:
+
+1. Open the **Files** app on your iPhone
+2. Navigate to your receipts folder (e.g. iCloud Drive → Files → Receipts)
+3. Tap the **…** button in the top-right corner
+4. Tap **Scan Documents**
+5. Point the camera at the receipt — the scanner auto-detects the edges and captures it
+6. Tap **Save** (top-right) when done — you can scan multiple pages before saving
+7. The PDF saves as `Scanned Document.pdf` directly in that folder
+
+If you have the watcher running, the file is renamed within seconds of
+syncing to your Mac. No further action needed.
+
+> **Tip:** The Files scanner works better than the Notes or Camera app for
+> receipts — it crops to the document edges and produces a cleaner PDF for
+> the vision model to read.
 
 ## License
 
