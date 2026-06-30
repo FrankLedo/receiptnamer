@@ -14,9 +14,10 @@ A background watcher fires automatically whenever a new scanned file appears, so
 ## Prerequisites
 
 - **macOS** with iCloud Drive (or any local folder)
-- **[Claude Code](https://claude.ai/code)** — uses `claude --print` which bills against your Claude subscription, not a separate API account
+- **[Claude Code](https://claude.ai/code)** — the default backend; uses `claude --print`, which bills against your Claude subscription, not a separate API account
 - **ocrmypdf** — adds a text layer to scanned PDFs
 - **poppler** — provides `pdftotext` for text extraction
+- **[Ollama](https://ollama.com)** *(optional)* — run a local model instead of Claude, so receipts never leave your Mac. See [Model backend](#model-backend).
 
 Install dependencies with Homebrew:
 
@@ -128,6 +129,35 @@ Override the path with the `RECEIPTNAMER_CONFIG` environment variable.
 ```
 
 After changing `watch_dirs`, re-run `receiptnamer --install-watcher` to update the watcher.
+
+### Model backend
+
+receiptnamer can name receipts with either cloud Claude (default) or a local
+[Ollama](https://ollama.com) model. Control this with two config keys:
+
+```json
+{
+  "watch_dirs": ["..."],
+  "backend": "claude",
+  "model": "qwen2.5:7b"
+}
+```
+
+- `backend`: `"claude"` (default) or `"ollama"`. If the key is absent, Claude is used.
+- `model`: the Ollama model name, used only when `backend` is `"ollama"` (e.g. `"qwen2.5:7b"`, `"llama3.3:70b"`).
+- `ollama_host` *(optional)*: defaults to `http://localhost:11434`.
+
+**Why local?** Receipts are financial documents — the `ollama` backend keeps them
+entirely on-device and works offline, with no API/subscription cost.
+
+**Tradeoff:** local models are less accurate at pulling the right date off a noisy
+OCR scan. In testing, `llama3.3:70b` came close to Claude while `qwen2.5:7b` was
+fast but often picked the wrong date. Claude remains the default for accuracy;
+switch to `ollama` when privacy or offline operation matters more.
+
+If `backend` is `ollama` but the Ollama server is unreachable, receiptnamer leaves
+the file unrenamed, shows a macOS notification, and the watcher retries on its next
+pass — it never silently falls back to the cloud.
 
 ## Date handling
 

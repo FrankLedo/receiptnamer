@@ -85,7 +85,11 @@ init_config() {
   python3 - "$CONFIG" "$default_dir" <<'PYEOF'
 import sys, json
 config_file, default_dir = sys.argv[1], sys.argv[2]
-config = {"watch_dirs": [default_dir]}
+config = {
+    "watch_dirs": [default_dir],
+    "backend": "claude",
+    "model": "qwen2.5:7b",
+}
 with open(config_file, 'w') as f:
     json.dump(config, f, indent=2)
     f.write('\n')
@@ -346,12 +350,111 @@ watch_run() {
 }
 
 # ---------------------------------------------------------------------------
+# Load backend/model selection from config into globals. Defaults to the
+# local Ollama backend so receipts stay on-device unless configured otherwise.
+load_llm_config() {
+  if [[ -f "$CONFIG" ]]; then
+    local vals
+    vals=$(python3 - "$CONFIG" <<'PYEOF'
+import sys, json
+try:
+    c = json.load(open(sys.argv[1]))
+except Exception:
+    c = {}
+print(c.get("backend", "claude"))
+print(c.get("model", "qwen2.5:7b"))
+print(c.get("ollama_host", "http://localhost:11434"))
+PYEOF
+)
+    BACKEND="${${(f)vals}[1]}"
+    MODEL="${${(f)vals}[2]}"
+    OLLAMA_HOST="${${(f)vals}[3]}"
+  fi
+  : "${BACKEND:=claude}"
+  : "${MODEL:=qwen2.5:7b}"
+  : "${OLLAMA_HOST:=http://localhost:11434}"
+}
+
+# Call the local Ollama HTTP API. Echoes the raw model response on stdout;
+# returns non-zero if the server is unreachable or returns an error, which
+# the caller treats as "skip and retry" rather than a bad name.
+ollama_generate() {
+  local prompt="$1"
+  python3 - "$OLLAMA_HOST" "$MODEL" "$prompt" <<'PYEOF'
+import sys, json, urllib.request
+host, model, prompt = sys.argv[1], sys.argv[2], sys.argv[3]
+body = json.dumps({
+    "model": model,
+    "prompt": prompt,
+    "stream": False,
+    "options": {"temperature": 0},
+}).encode()
+try:
+    req = urllib.request.Request(
+        host.rstrip("/") + "/api/generate", data=body,
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        data = json.load(r)
+    sys.stdout.write(data.get("response", ""))
+except Exception as e:
+    print(f"ollama error: {e}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+}
+
+# Generate a filename (no extension) from receipt text using the configured
+# backend. Echoes the cleaned filename on success. Returns non-zero only when
+# the backend itself fails (distinct from an empty/garbage name).
+generate_name() {
+  local text="$1" scan_date="$2"
+  local prompt="You name scanned receipt files. Output ONLY the filename: no extension, no path, no quotes, no explanation, no square brackets.
+
+Format: YYYY-MM-DD - Vendor
+You may append ' - short context' only when it is clearly useful (e.g. ' - dinner').
+
+Rules:
+- Find the date IN the receipt text and use it. Only if there is truly no date in the text, use this fallback: $scan_date
+- Use the real merchant/vendor name in Title Case with normal spaces. Never use ALL CAPS or underscores. Fix obvious OCR typos in the vendor name.
+
+Example of a correct answer: 2026-01-18 - Samurai Sushi - dinner
+
+Receipt text:
+$text"
+
+  local raw
+  case "$BACKEND" in
+    claude)
+      raw=$(claude --print "$prompt" 2>/dev/null) || return 1
+      ;;
+    ollama)
+      raw=$(ollama_generate "$prompt") || return 1
+      ;;
+    *)
+      print "Unknown backend: $BACKEND (expected 'ollama' or 'claude')" >&2
+      return 1
+      ;;
+  esac
+
+  print -r -- "$raw" \
+    | tr -d '\n\r' \
+    | sed 's|[/\\:*?"<>|]||g' \
+    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+# Fire a macOS notification at most once per run when the backend is down.
+notify_backend_failure() {
+  (( NOTIFIED )) && return
+  NOTIFIED=1
+  osascript -e 'display notification "Local model unreachable — receipt left unrenamed, will retry." with title "receiptnamer"' 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
 process_pdf() {
   local f="$1"
   local base="${f:t}"
 
   local tmpfile
-  tmpfile=$(mktemp "${TMPDIR:-/tmp}/receiptnamer-XXXXXX.pdf")
+  tmpfile=$(mktemp "${TMPDIR:-/tmp}/receiptnamer-XXXXXX")
   ocrmypdf --skip-text --quiet "$f" "$tmpfile" 2>/dev/null || cp "$f" "$tmpfile"
 
   local text
@@ -369,17 +472,14 @@ process_pdf() {
   scan_date=$(stat -f "%SB" -t "%Y-%m-%d" "$f" 2>/dev/null) || scan_date=$(date +%Y-%m-%d)
 
   local newname
-  newname=$(claude --print \
-"Return ONLY a filename (no extension, no path, no explanation) for this scanned receipt.
-Format: YYYY-MM-DD - Vendor[ - brief context if meaningful]
-If you cannot find a date in the receipt text, use this date (when it was scanned): $scan_date
-Reply with the filename only, nothing else.
-
-Receipt text:
-$text" 2>/dev/null \
-    | tr -d '\n\r' \
-    | sed 's|[/\\:*?"<>|]||g' \
-    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  if ! newname=$(generate_name "$text" "$scan_date"); then
+    # Backend call failed (e.g. Ollama server unreachable). Leave the file
+    # unrenamed; the watcher will retry on its next pass. Notify once per run.
+    notify_backend_failure
+    print "SKIP      $base (backend '$BACKEND' unreachable)"
+    (( skipped++ )) || true
+    return
+  fi
 
   if [[ -z "$newname" ]]; then
     print "NO NAME   $base"
@@ -442,7 +542,16 @@ for arg in "$@"; do
   esac
 done
 
-for dep in ocrmypdf pdftotext claude; do
+load_llm_config
+
+# Core deps are always required; the model backend adds its own.
+deps=(ocrmypdf pdftotext python3)
+case "$BACKEND" in
+  claude) deps+=(claude) ;;
+  ollama) ;;  # talks to the Ollama HTTP API via python3 (already required)
+  *) print "Error: unknown backend '$BACKEND' in $CONFIG (expected 'ollama' or 'claude')" >&2; exit 1 ;;
+esac
+for dep in $deps; do
   if ! command -v "$dep" &>/dev/null; then
     print "Error: $dep not found on PATH" >&2
     exit 1
@@ -452,6 +561,7 @@ done
 renamed=0
 unchanged=0
 skipped=0
+NOTIFIED=0
 
 if (( WATCH_RUN )); then
   watch_run
