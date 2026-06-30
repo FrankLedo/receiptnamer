@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
-import { statSync, readdirSync } from "node:fs";
+import { statSync, readdirSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadConfig, initConfig, expandHome } from "./config.js";
 import { createNamer } from "./backends/factory.js";
@@ -24,7 +24,13 @@ Options:
 
 function collectPdfs(input: string): string[] {
   const p = resolve(expandHome(input));
-  const st = statSync(p);
+  let st;
+  try {
+    st = statSync(p);
+  } catch {
+    console.log(`SKIP ${p} (not found)`);
+    return [];
+  }
   if (st.isDirectory()) {
     return readdirSync(p)
       .filter((f) => f.toLowerCase().endsWith(".pdf") && !f.startsWith("."))
@@ -68,12 +74,25 @@ export async function run(argv: string[]): Promise<{ renamed: number; unchanged:
   }
   if (values["watch-run"]) {
     const { runWatchPass } = await import("./watch.js");
-    const results = await runWatchPass(config, { dryRun: Boolean(values["dry-run"]) });
-    return summarize(results, tally);
+    try {
+      const results = await runWatchPass(config, { dryRun: Boolean(values["dry-run"]) });
+      return summarize(results, tally);
+    } catch (e) {
+      const msg = (e as Error).message;
+      console.error(`error: ${msg}`);
+      notifyOnce(`receiptnamer watcher error: ${msg}`);
+      return tally;
+    }
   }
   if (values["watch"]) {
     const { watch } = await import("./watch.js");
-    await watch(config, { dryRun: Boolean(values["dry-run"]) });
+    try {
+      await watch(config, { dryRun: Boolean(values["dry-run"]) });
+    } catch (e) {
+      const msg = (e as Error).message;
+      console.error(`error: ${msg}`);
+      notifyOnce(`receiptnamer watcher error: ${msg}`);
+    }
     return tally;
   }
 
@@ -116,4 +135,12 @@ function summarize(
   return tally;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) { run(process.argv.slice(2)); }
+const invokedAsBin =
+  !!process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+if (invokedAsBin) {
+  run(process.argv.slice(2)).catch((err) => {
+    console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+  });
+}

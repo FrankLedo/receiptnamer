@@ -7,7 +7,6 @@ build-test/
 # GitHub Actions
 .github/
 # TypeScript config
-tsconfig.json
 tsconfig*.json
 # Docs (README is kept; everything else excluded)
 CHANGELOG.md

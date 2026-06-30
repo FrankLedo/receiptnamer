@@ -120,7 +120,7 @@ variable.
 ```json
 {
   "watch_dirs": [
-    "~/Library/Mobile Documents/com~apple~CloudDocs/Files/Receipts"
+    "~/Library/Mobile Documents/com~apple~CloudDocs/Receipts and Manuals"
   ],
   "backend": "ollama",
   "model": "qwen2.5vl:7b",
