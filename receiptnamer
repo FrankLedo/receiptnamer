@@ -1,0 +1,489 @@
+#!/bin/zsh
+# receiptnamer — OCR and rename scanned receipts using Claude
+
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+SCRIPT="${0:A}"
+CONFIG="${RECEIPTNAMER_CONFIG:-$HOME/.config/receiptnamer/config.json}"
+
+# ---------------------------------------------------------------------------
+usage() {
+  print "Usage:"
+  print "  receiptnamer [--dry-run] <file|directory> [...]"
+  print "  receiptnamer --init                 Create starter config"
+  print "  receiptnamer --install-quickaction  Install Finder Quick Action"
+  print "  receiptnamer --install-watcher      Install automatic background watcher"
+}
+
+# ---------------------------------------------------------------------------
+# Find Scanned Document PDFs across all watch_dirs; print one path per line.
+find_scanned() {
+  if [[ ! -f "$CONFIG" ]]; then
+    print "Config not found: $CONFIG" >&2
+    print "Run: receiptnamer --init" >&2
+    return 1
+  fi
+  python3 - "$CONFIG" <<'PYEOF'
+import sys, os, glob, json
+
+config_file = sys.argv[1]
+try:
+    with open(config_file) as f:
+        config = json.load(f)
+except Exception as e:
+    print(f"Error reading config: {e}", file=sys.stderr)
+    sys.exit(1)
+
+for pattern in config.get("watch_dirs", []):
+    expanded = os.path.expanduser(pattern)
+    for d in sorted(glob.glob(expanded)):
+        if not os.path.isdir(d):
+            continue
+        for f in sorted(glob.glob(os.path.join(d, "Scanned Document*.pdf")) +
+                        glob.glob(os.path.join(d, "Scanned Document*.PDF"))):
+            if os.path.isfile(f):
+                print(f)
+PYEOF
+}
+
+# Kept for --install-watcher: resolves dirs for display only.
+resolve_dirs() {
+  if [[ ! -f "$CONFIG" ]]; then
+    print "Config not found: $CONFIG" >&2
+    return 1
+  fi
+  python3 - "$CONFIG" <<'PYEOF'
+import sys, os, glob, json
+config_file = sys.argv[1]
+with open(config_file) as f:
+    config = json.load(f)
+for pattern in config.get("watch_dirs", []):
+    expanded = os.path.expanduser(pattern)
+    for m in sorted(glob.glob(expanded)):
+        if os.path.isdir(m):
+            print(m)
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
+init_config() {
+  if [[ -f "$CONFIG" ]]; then
+    print "Config already exists: $CONFIG"
+    print "Edit it to change your receipts folders."
+    return
+  fi
+  mkdir -p "${CONFIG:h}"
+
+  local icloud="$HOME/Library/Mobile Documents/com~apple~CloudDocs"
+  local default_dir
+  local year=$(date +%Y)
+  if [[ -d "$icloud" ]]; then
+    default_dir="~/Library/Mobile Documents/com~apple~CloudDocs/Files/$year/Receipts and Manuals"
+  else
+    default_dir="~/Documents/Receipts"
+  fi
+
+  python3 - "$CONFIG" "$default_dir" <<'PYEOF'
+import sys, json
+config_file, default_dir = sys.argv[1], sys.argv[2]
+config = {"watch_dirs": [default_dir]}
+with open(config_file, 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+PYEOF
+
+  print "Created: $CONFIG"
+  print ""
+  print "watch_dirs supports shell globs. Update the year in January"
+  print "or use '*' to match all year folders."
+  print ""
+  print "Edit the path if your receipts folder is somewhere else:"
+  print "  $CONFIG"
+}
+
+# ---------------------------------------------------------------------------
+install_quickaction() {
+  local qa_dir="$HOME/Library/Services/receiptnamer.workflow/Contents"
+  mkdir -p "$qa_dir"
+
+  python3 - "$SCRIPT" "$qa_dir" <<'PYEOF'
+import sys, html, os
+
+script, qa_dir = sys.argv[1], sys.argv[2]
+
+raw_cmd = (
+    f"summary=$('{script}' \"$@\" 2>&1 | tail -1)\n"
+    "osascript -e \"display notification \\\"$summary\\\" with title \\\"receiptnamer\\\"\""
+)
+cmd_xml = html.escape(raw_cmd)
+
+wflow = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>AMApplicationBuild</key>
+\t<string>537</string>
+\t<key>AMApplicationVersion</key>
+\t<string>2.10</string>
+\t<key>AMDocumentVersion</key>
+\t<string>2</string>
+\t<key>actions</key>
+\t<array>
+\t\t<dict>
+\t\t\t<key>action</key>
+\t\t\t<dict>
+\t\t\t\t<key>AMAccepts</key>
+\t\t\t\t<dict>
+\t\t\t\t\t<key>Container</key>
+\t\t\t\t\t<string>List</string>
+\t\t\t\t\t<key>Optional</key>
+\t\t\t\t\t<true/>
+\t\t\t\t\t<key>Types</key>
+\t\t\t\t\t<array>
+\t\t\t\t\t\t<string>com.apple.cocoa.string</string>
+\t\t\t\t\t</array>
+\t\t\t\t</dict>
+\t\t\t\t<key>AMActionVersion</key>
+\t\t\t\t<string>2.0.3</string>
+\t\t\t\t<key>AMApplication</key>
+\t\t\t\t<array>
+\t\t\t\t\t<string>Automator</string>
+\t\t\t\t</array>
+\t\t\t\t<key>AMProvides</key>
+\t\t\t\t<dict>
+\t\t\t\t\t<key>Container</key>
+\t\t\t\t\t<string>List</string>
+\t\t\t\t\t<key>Types</key>
+\t\t\t\t\t<array>
+\t\t\t\t\t\t<string>com.apple.cocoa.string</string>
+\t\t\t\t\t</array>
+\t\t\t\t</dict>
+\t\t\t\t<key>ActionBundlePath</key>
+\t\t\t\t<string>/System/Library/Automator/Run Shell Script.action</string>
+\t\t\t\t<key>ActionName</key>
+\t\t\t\t<string>Run Shell Script</string>
+\t\t\t\t<key>ActionParameters</key>
+\t\t\t\t<dict>
+\t\t\t\t\t<key>COMMAND_STRING</key>
+\t\t\t\t\t<string>{cmd_xml}</string>
+\t\t\t\t\t<key>CheckedForUserDefaultShell</key>
+\t\t\t\t\t<true/>
+\t\t\t\t\t<key>inputMethod</key>
+\t\t\t\t\t<integer>1</integer>
+\t\t\t\t\t<key>shell</key>
+\t\t\t\t\t<string>/bin/zsh</string>
+\t\t\t\t\t<key>source</key>
+\t\t\t\t\t<string></string>
+\t\t\t\t</dict>
+\t\t\t\t<key>BundleIdentifier</key>
+\t\t\t\t<string>com.apple.RunShellScript</string>
+\t\t\t\t<key>CFBundleVersion</key>
+\t\t\t\t<string>2.0.3</string>
+\t\t\t\t<key>CanShowSelectedItemsWhenRun</key>
+\t\t\t\t<false/>
+\t\t\t\t<key>CanShowWhenRun</key>
+\t\t\t\t<true/>
+\t\t\t\t<key>Category</key>
+\t\t\t\t<array>
+\t\t\t\t\t<string>AMCategoryUtilities</string>
+\t\t\t\t</array>
+\t\t\t\t<key>Class Name</key>
+\t\t\t\t<string>RunShellScriptAction</string>
+\t\t\t\t<key>InputUUID</key>
+\t\t\t\t<string>A1B2C3D4-E5F6-7890-ABCD-EF1234567890</string>
+\t\t\t\t<key>OutputUUID</key>
+\t\t\t\t<string>B2C3D4E5-F6A7-8901-BCDE-F12345678901</string>
+\t\t\t\t<key>UUID</key>
+\t\t\t\t<string>C3D4E5F6-A7B8-9012-CDEF-123456789012</string>
+\t\t\t\t<key>UnlocalizedApplications</key>
+\t\t\t\t<array>
+\t\t\t\t\t<string>Automator</string>
+\t\t\t\t</array>
+\t\t\t\t<key>arguments</key>
+\t\t\t\t<dict>
+\t\t\t\t\t<key>0</key>
+\t\t\t\t\t<dict>
+\t\t\t\t\t\t<key>default value</key>
+\t\t\t\t\t\t<integer>0</integer>
+\t\t\t\t\t\t<key>name</key>
+\t\t\t\t\t\t<string>inputMethod</string>
+\t\t\t\t\t\t<key>required</key>
+\t\t\t\t\t\t<string>0</string>
+\t\t\t\t\t\t<key>type</key>
+\t\t\t\t\t\t<string>0</string>
+\t\t\t\t\t\t<key>uuid</key>
+\t\t\t\t\t\t<string>0</string>
+\t\t\t\t\t</dict>
+\t\t\t\t</dict>
+\t\t\t\t<key>conversionLabel</key>
+\t\t\t\t<integer>0</integer>
+\t\t\t\t<key>isViewVisible</key>
+\t\t\t\t<integer>1</integer>
+\t\t\t</dict>
+\t\t\t<key>isViewVisible</key>
+\t\t\t<integer>1</integer>
+\t\t</dict>
+\t</array>
+\t<key>connectors</key>
+\t<dict/>
+\t<key>workflowMetaData</key>
+\t<dict>
+\t\t<key>inputTypeIdentifier</key>
+\t\t<string>com.apple.Automator.fileSystemObject</string>
+\t\t<key>outputTypeIdentifier</key>
+\t\t<string>com.apple.Automator.nothing</string>
+\t\t<key>presentationMode</key>
+\t\t<integer>15</integer>
+\t\t<key>processesInput</key>
+\t\t<false/>
+\t\t<key>serviceInputTypeIdentifier</key>
+\t\t<string>com.apple.Automator.fileSystemObject</string>
+\t\t<key>serviceOutputTypeIdentifier</key>
+\t\t<string>com.apple.Automator.nothing</string>
+\t\t<key>serviceProcessesInput</key>
+\t\t<false/>
+\t\t<key>systemImageName</key>
+\t\t<string>NSTouchBarDocuments</string>
+\t\t<key>useAutomaticInputType</key>
+\t\t<false/>
+\t\t<key>workflowTypeIdentifier</key>
+\t\t<string>com.apple.Automator.servicesMenu</string>
+\t</dict>
+</dict>
+</plist>
+"""
+
+info = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>NSServices</key>
+\t<array>
+\t\t<dict>
+\t\t\t<key>NSIconName</key>
+\t\t\t<string>NSTouchBarDocuments</string>
+\t\t\t<key>NSMenuItem</key>
+\t\t\t<dict>
+\t\t\t\t<key>default</key>
+\t\t\t\t<string>Rename with receiptnamer</string>
+\t\t\t</dict>
+\t\t\t<key>NSMessage</key>
+\t\t\t<string>runWorkflowAsService</string>
+\t\t\t<key>NSSendFileTypes</key>
+\t\t\t<array>
+\t\t\t\t<string>public.item</string>
+\t\t\t</array>
+\t\t</dict>
+\t</array>
+</dict>
+</plist>
+"""
+
+with open(os.path.join(qa_dir, 'document.wflow'), 'w') as fh:
+    fh.write(wflow)
+with open(os.path.join(qa_dir, 'Info.plist'), 'w') as fh:
+    fh.write(info)
+PYEOF
+
+  print "Installed: $HOME/Library/Services/receiptnamer.workflow"
+  print 'Right-click any PDF or folder in Finder → Quick Actions → "Rename with receiptnamer"'
+  print 'Then go to System Settings → Privacy & Security → Extensions → Finder and enable it.'
+}
+
+# ---------------------------------------------------------------------------
+install_watcher() {
+  local plist="$HOME/Library/LaunchAgents/com.receiptnamer.watcher.plist"
+  local log="$HOME/Library/Logs/receiptnamer-watcher.log"
+
+  python3 - "$SCRIPT" "$plist" "$log" <<'PYEOF'
+import sys, os
+
+script, plist, log = sys.argv[1], sys.argv[2], sys.argv[3]
+
+content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>Label</key>
+\t<string>com.receiptnamer.watcher</string>
+\t<key>ProgramArguments</key>
+\t<array>
+\t\t<string>{script}</string>
+\t\t<string>--watch-run</string>
+\t</array>
+\t<key>StartInterval</key>
+\t<integer>30</integer>
+\t<key>StandardOutPath</key>
+\t<string>{log}</string>
+\t<key>StandardErrorPath</key>
+\t<string>{log}</string>
+</dict>
+</plist>
+"""
+
+with open(plist, 'w') as fh:
+    fh.write(content)
+PYEOF
+
+  launchctl unload "$plist" 2>/dev/null || true
+  launchctl load "$plist"
+  print "Watcher active."
+  print "Log: $HOME/Library/Logs/receiptnamer-watcher.log"
+}
+
+# ---------------------------------------------------------------------------
+watch_run() {
+  local -a files
+  files=("${(@f)$(find_scanned)}")
+  local found=0 f
+
+  for f in "${files[@]}"; do
+    [[ -f "$f" ]] || continue
+    found=1
+    process_pdf "$f"
+  done
+
+  (( found )) && print "\n$renamed renamed, $unchanged unchanged, $skipped skipped"
+}
+
+# ---------------------------------------------------------------------------
+process_pdf() {
+  local f="$1"
+  local base="${f:t}"
+
+  local tmpfile
+  tmpfile=$(mktemp "${TMPDIR:-/tmp}/receiptnamer-XXXXXX.pdf")
+  ocrmypdf --skip-text --quiet "$f" "$tmpfile" 2>/dev/null || cp "$f" "$tmpfile"
+
+  local text
+  text=$(pdftotext "$tmpfile" - 2>/dev/null) || true
+  text="${text:0:3000}"
+
+  if [[ -z "${text// /}" ]]; then
+    print "NO TEXT   $base"
+    (( skipped++ )) || true
+    return
+  fi
+
+  # File creation date = scan date; used as fallback when the receipt has no legible date
+  local scan_date
+  scan_date=$(stat -f "%SB" -t "%Y-%m-%d" "$f" 2>/dev/null) || scan_date=$(date +%Y-%m-%d)
+
+  local newname
+  newname=$(claude --print \
+"Return ONLY a filename (no extension, no path, no explanation) for this scanned receipt.
+Format: YYYY-MM-DD - Vendor[ - brief context if meaningful]
+If you cannot find a date in the receipt text, use this date (when it was scanned): $scan_date
+Reply with the filename only, nothing else.
+
+Receipt text:
+$text" 2>/dev/null \
+    | tr -d '\n\r' \
+    | sed 's|[/\\:*?"<>|]||g' \
+    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+  if [[ -z "$newname" ]]; then
+    print "NO NAME   $base"
+    (( skipped++ )) || true
+    return
+  fi
+
+  local dir="${f:h}"
+  local target="$dir/$newname.pdf"
+
+  if [[ "$target" == "$f" ]]; then
+    print "UNCHANGED $base"
+    (( unchanged++ )) || true
+    return
+  fi
+
+  if [[ -f "$target" ]]; then
+    local n=2
+    while [[ -f "$dir/$newname ($n).pdf" ]]; do (( n++ )); done
+    target="$dir/$newname ($n).pdf"
+  fi
+
+  local tag="RENAME "
+  (( DRY_RUN )) && tag="DRY RUN"
+  print "$tag   $base"
+  print "        → ${target:t}"
+
+  if (( !DRY_RUN )); then
+    if mv "$f" "$target" 2>/dev/null; then
+      # Direct rename: preserves creation date (same-filesystem rename syscall)
+      (( renamed++ )) || true
+    elif cp "$tmpfile" "$target" 2>/dev/null; then
+      # iCloud from launchd: cp OCR'd temp, trash original via Finder
+      osascript -e "tell application \"Finder\" to move POSIX file \"$f\" to trash" 2>/dev/null || rm -f "$f" 2>/dev/null
+      (( renamed++ )) || true
+    else
+      # Last resort: Finder rename (no OCR layer, but gets a good name)
+      osascript -e "tell application \"Finder\" to set name of (POSIX file \"$f\" as alias) to \"${target:t}\"" 2>/dev/null \
+        && (( renamed++ )) || true
+    fi
+  fi
+  rm -f "$tmpfile"
+}
+
+# ---------------------------------------------------------------------------
+# Main
+DRY_RUN=0
+PATHS=()
+WATCH_RUN=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run|-n)          DRY_RUN=1 ;;
+    --init)                init_config; exit 0 ;;
+    --install-quickaction) install_quickaction; exit 0 ;;
+    --install-watcher)     install_watcher; exit 0 ;;
+    --watch-run)           WATCH_RUN=1 ;;
+    --help|-h)             usage; exit 0 ;;
+    *)                     PATHS+=("$arg") ;;
+  esac
+done
+
+for dep in ocrmypdf pdftotext claude; do
+  if ! command -v "$dep" &>/dev/null; then
+    print "Error: $dep not found on PATH" >&2
+    exit 1
+  fi
+done
+
+renamed=0
+unchanged=0
+skipped=0
+
+if (( WATCH_RUN )); then
+  watch_run
+  exit 0
+fi
+
+if (( ${#PATHS} == 0 )); then
+  usage >&2
+  exit 1
+fi
+
+local expanded
+for inputpath in "${PATHS[@]}"; do
+  if [[ "$inputpath" == *[\*\?\[]* ]]; then
+    expanded=( ${~inputpath}(N) )
+  else
+    expanded=( "$inputpath" )
+  fi
+  if (( ${#expanded} == 0 )); then
+    print "Not found: $inputpath" >&2
+    continue
+  fi
+  for item in "${expanded[@]}"; do
+    if [[ -d "$item" ]]; then
+      for f in "$item"/*.pdf(N) "$item"/*.PDF(N); do
+        [[ -f "$f" ]] || continue
+        process_pdf "$f"
+      done
+    elif [[ -f "$item" ]]; then
+      process_pdf "$item"
+    fi
+  done
+done
+
+print "\n$renamed renamed, $unchanged unchanged, $skipped skipped"
