@@ -80,9 +80,14 @@ interface Namer {
   Default model `qwen2.5vl:7b`. No key. Unreachable → backend error.
 - **`anthropic`** — Anthropic Messages API, vision content block (base64 PNG)
   + text instruction, `temperature:0`. Requires `ANTHROPIC_API_KEY` (env only).
-  Default model: a cost-effective vision-capable Claude model, configurable;
-  exact model id + request shape verified against the claude-api reference at
-  implementation time. Missing key / API error → backend error.
+  Default model **`claude-haiku-4-5`** — the cheapest vision-capable Claude
+  model ($1/$5 per M input/output tokens, 200K context), overridable via the
+  `model` config key. Request shape: a `messages` POST to
+  `https://api.anthropic.com/v1/messages` (headers `x-api-key`,
+  `anthropic-version: 2023-06-01`) whose single user turn carries an `image`
+  content block `{ type: "image", source: { type: "base64",
+  media_type: "image/png", data } }` followed by a text instruction block; no
+  Anthropic SDK (native `fetch`). Missing key / API error → backend error.
 
 ### Modules (each isolated and unit-testable)
 
