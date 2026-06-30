@@ -1,0 +1,20 @@
+# TypeScript source (compiled output in dist/ is what ships)
+src/
+tests/
+build-test/
+# Claude Code session data
+.claude/
+# GitHub Actions
+.github/
+# TypeScript config
+tsconfig.json
+tsconfig*.json
+# Docs (README is kept; everything else excluded)
+CHANGELOG.md
+docs/
+# v1 artifacts (not part of the npm package)
+receiptnamer
+install.sh
+# Git / OS
+.gitignore
+.DS_Store

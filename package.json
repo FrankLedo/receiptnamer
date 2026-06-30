@@ -1,0 +1,29 @@
+{
+  "name": "@frankledo/receiptnamer",
+  "version": "0.1.0",
+  "description": "Name scanned receipt PDFs by reading the rendered image with a vision-language model (local Ollama or Anthropic API)",
+  "license": "MIT",
+  "homepage": "https://github.com/frankledo/receiptnamer#readme",
+  "bugs": { "url": "https://github.com/frankledo/receiptnamer/issues" },
+  "author": "Frank Ledo <frank@frankledo.com>",
+  "type": "module",
+  "bin": { "receiptnamer": "dist/index.js" },
+  "keywords": ["receipt","rename","scan","vision","ollama","anthropic","cli","automation","pdf"],
+  "repository": { "type": "git", "url": "git+https://github.com/frankledo/receiptnamer.git" },
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "build": "tsc && node -e \"const fs=require('fs'); const f='dist/index.js'; let c=fs.readFileSync(f,'utf8'); if(c.startsWith('#!')) c=c.slice(c.indexOf('\\n')+1); fs.writeFileSync(f, '#!/usr/bin/env node\\n'+c); fs.chmodSync(f, '755')\"",
+    "prepublishOnly": "npm run build",
+    "test": "tsc -p tsconfig.test.json && node --test \"build-test/tests/**/*.test.js\"",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.2",
+    "chokidar": "^4.0.0",
+    "pdfjs-dist": "^6.1.200"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  }
+}
