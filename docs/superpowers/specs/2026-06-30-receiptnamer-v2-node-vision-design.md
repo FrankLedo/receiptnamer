@@ -152,11 +152,13 @@ Summary line unchanged: `N renamed, N unchanged, N skipped`.
 
 ## Evaluation discipline (carried into tests/docs)
 
-Do not score the model against hand-curated filenames as if they were absolute
-truth. In the prototype the VLM returned "Samurai Sushi Boat" where an old
-filename said "Samurai Sushi Oakland" — "Oakland" was a human annotation, not on
-the receipt. The model read the document more faithfully. Evaluate against what
-is on the document.
+Do not score the model against pre-existing filenames as if they were absolute
+truth — they may be artifacts of earlier, imperfect runs. In the prototype the
+VLM returned "Samurai Sushi Boat" where an old filename said "Samurai Sushi
+Oakland"; that "Oakland" was a leftover from early testing (an earlier run
+inferred the restaurant's city and it was kept as "close enough"), not text on
+the receipt. The VLM read the document more faithfully than the old name did.
+Evaluate against what is on the document.
 
 ## Testing (TDD)
 
