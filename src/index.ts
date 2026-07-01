@@ -6,6 +6,7 @@ import { loadConfig, initConfig, expandHome } from "./config.js";
 import { createNamer } from "./backends/factory.js";
 import { processFile, type ProcessResult } from "./name.js";
 import { notifyOnce } from "./notify.js";
+import { filterNewSkips } from "./notifystate.js";
 
 const USAGE = `receiptnamer — name scanned receipts from their image with a vision model
 
@@ -76,7 +77,10 @@ export async function run(argv: string[]): Promise<{ renamed: number; unchanged:
     const { runWatchPass } = await import("./watch.js");
     try {
       const results = await runWatchPass(config, { dryRun: Boolean(values["dry-run"]) });
-      return summarize(results, tally);
+      const { skippedFiles } = summarize(results, tally);
+      const newSkips = filterNewSkips(skippedFiles);
+      if (newSkips.length > 0) notifyOnce(`${newSkips.length} receipt(s) skipped — see terminal output`);
+      return tally;
     } catch (e) {
       const msg = (e as Error).message;
       console.error(`error: ${msg}`);
@@ -117,22 +121,24 @@ export async function run(argv: string[]): Promise<{ renamed: number; unchanged:
   for (const f of files) {
     results.push(await processFile(f, { namer, dryRun: Boolean(values["dry-run"]) }));
   }
-  return summarize(results, tally);
+  const { skippedFiles } = summarize(results, tally);
+  if (skippedFiles.length > 0) notifyOnce(`${tally.skipped} receipt(s) skipped — see terminal output`);
+  return tally;
 }
 
 function summarize(
   results: ProcessResult[],
   tally: { renamed: number; unchanged: number; skipped: number }
-): { renamed: number; unchanged: number; skipped: number } {
+): { tally: { renamed: number; unchanged: number; skipped: number }; skippedFiles: string[] } {
+  const skippedFiles: string[] = [];
   for (const r of results) {
     if (r.outcome === "renamed") { tally.renamed++; console.log(`RENAMED ${r.file} -> ${r.to}`); }
     else if (r.outcome === "unchanged") { tally.unchanged++; console.log(`UNCHANGED ${r.file}`); }
-    else if (r.outcome === "no-name") { tally.skipped++; console.log(`NO NAME ${r.file}`); }
-    else { tally.skipped++; console.log(`SKIP ${r.file} (${r.reason ?? "error"})`); }
+    else if (r.outcome === "no-name") { tally.skipped++; skippedFiles.push(r.file); console.log(`NO NAME ${r.file}`); }
+    else { tally.skipped++; skippedFiles.push(r.file); console.log(`SKIP ${r.file} (${r.reason ?? "error"})`); }
   }
   console.log(`${tally.renamed} renamed, ${tally.unchanged} unchanged, ${tally.skipped} skipped`);
-  if (tally.skipped > 0) notifyOnce(`${tally.skipped} receipt(s) skipped — see terminal output`);
-  return tally;
+  return { tally, skippedFiles };
 }
 
 const invokedAsBin =
