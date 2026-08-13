@@ -11,9 +11,6 @@ tsconfig*.json
 # Docs (README is kept; everything else excluded)
 CHANGELOG.md
 docs/
-# v1 artifacts (not part of the npm package)
-receiptnamer
-install.sh
 # Git / OS
 .gitignore
 .DS_Store
