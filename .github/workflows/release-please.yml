@@ -27,6 +27,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'   # pdfjs-dist@6 requires Node >=22.13.0
+          check-latest: true
           registry-url: 'https://registry.npmjs.org'
       - run: npm ci
       - run: npm publish --access public --provenance
